@@ -2,6 +2,8 @@
  * Copyright 2007, NetworkBench Systems Corp.
  */
 
+import redis.clients.jedis.Pipeline;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -200,7 +202,9 @@ public interface RedisClient {
 	
 
 	public void hmset(byte[] key, Map<byte[], byte[]> fieldAndValues);
-	
+
+	public Map<String, String> hgetAll(String key);
+
 	/**
 	 * 指定Key自增
 	 * @param key
@@ -262,4 +266,6 @@ public interface RedisClient {
 	 * @return
      */
 	public Set<String> smembers(String key);
+
+	public Pipeline pipelined();
 }

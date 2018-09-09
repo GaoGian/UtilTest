@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.Pipeline;
 import redis.clients.jedis.Protocol;
 
 import java.util.*;
@@ -1009,13 +1010,13 @@ public class JedisPoolRedisClientImpl implements RedisClient {
 	public String hget(String key, String field) {
 		if(this.jedisPool == null)
 			return null;
-		
+
 		Jedis jedis = null;
 		String value = null;
 		try {
 			jedis = jedisPool.getResource();
 			value = jedis.hget(key, field);
-			
+
 			if(this.statsEnabled && key.length() > 0) {
 				this.statGet(key.substring(0, 1));
 			}
@@ -1030,7 +1031,7 @@ public class JedisPoolRedisClientImpl implements RedisClient {
 				}
 			}
 		}
-		
+
 		return value;
 	}
 
@@ -1257,6 +1258,35 @@ public class JedisPoolRedisClientImpl implements RedisClient {
 		}
 	}
 
+	@Override
+	public Map<String, String> hgetAll(String key) {
+		if(this.jedisPool == null)
+			return null;
+
+		Jedis jedis = null;
+		Map<String, String> value = null;
+		try {
+			jedis = jedisPool.getResource();
+			value = jedis.hgetAll(key);
+
+			if(this.statsEnabled && key.length() > 0) {
+				this.statGet(key.substring(0, 1));
+			}
+		} catch(Throwable ex) {
+//			logger.error("failed to hget value from redis: " + ex.getMessage(), ex);
+		} finally {
+			if(jedis != null) {
+				try {
+					jedis.close();
+				} catch(Throwable t) {
+//					logger.error("error to return redis resource to pool: " + t.getMessage(), t);
+				}
+			}
+		}
+
+		return value;
+	}
+
 	/* (non-Javadoc)
 	 * @see com.networkbench.newlens.datacollector.service.RedisClient#hincrBy(java.lang.String, java.lang.String, long)
 	 */
@@ -1470,6 +1500,30 @@ public class JedisPoolRedisClientImpl implements RedisClient {
 		try {
 			jedis = jedisPool.getResource();
 			return jedis.smembers(key);
+		} catch(Throwable ex) {
+//			logger.error("failed to keys for redis: " + ex.getMessage(), ex);
+		} finally {
+			if(jedis != null) {
+				try {
+					jedis.close();
+				} catch(Throwable t) {
+//					logger.error("error to return redis resource to pool: " + t.getMessage(), t);
+				}
+			}
+		}
+
+		return null;
+	}
+
+	@Override
+	public Pipeline pipelined() {
+		if(this.jedisPool == null)
+			return null;
+
+		Jedis jedis = null;
+		try {
+			jedis = jedisPool.getResource();
+			return jedis.pipelined();
 		} catch(Throwable ex) {
 //			logger.error("failed to keys for redis: " + ex.getMessage(), ex);
 		} finally {
