@@ -4,13 +4,11 @@ import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.Pipeline;
 
 import java.io.*;
-import java.net.SocketException;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.SQLException;
+import java.sql.*;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.Date;
 
 /**
  * 处理机器学习“指标异常预测”基础数据
@@ -27,8 +25,6 @@ public class BigDataTest {
 
         String readFilePath = "C:\\Users\\tingyun\\Desktop\\临时\\BigData\\" + fileName + ".csv";
         String writeFilePath = "C:\\Users\\tingyun\\Desktop\\临时\\BigData\\BigDataBaseResult_" + fileName + "_temp.csv";
-
-        Pipeline pipeline = initRedisPipline();
 
         final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
@@ -55,6 +51,9 @@ public class BigDataTest {
         String[] headers = null;
         BufferedReader br = new BufferedReader(reader);
         Integer fieldCount = 0;
+
+        Connection conn = getMysqlConn();
+        StringBuilder sql = new StringBuilder();
         try {
             int count = 0;
             int fieldNum = 0;
@@ -66,41 +65,41 @@ public class BigDataTest {
                     String[] metricValues = line.split(",");
                     String timeStamp = metricValues[0];
                     String appKey = metricValues[1];
-
                     appKeys.add(appKey);
+
+                    String tableName = getTableName(timeStamp);
 
                     for (int i = startMetricIndex; i < headers.length; i++) {
                         String field = headers[i];
                         String metricValue = "NULL".equals(metricValues[i]) ? "0" : metricValues[i];
+                        sql.append("update " + tableName + " set `" + timeStamp + "` = '" + metricValue + "' where headerKey = '" + appKey + "|" + field + "';") ;
 
-                        boolean complete = false;
-                        while(!complete) {
-                            try {
-                                pipeline.hset("BIG_DATA", field + ":" + timeStamp.replace(":", "-").replace(" ", "_") + ":" + appKey, metricValue);
-                                complete = true;
-                            } catch (Throwable e) {
-                                e.printStackTrace();
-                                System.out.println("redis pipline error");
-
-                                Thread.sleep(10000L);
-                                pipeline = initRedisPipline();
-                            }
-                        }
                     }
 
                     fieldNum += metricValues.length - 2;
 
-                    if(count % 1000 == 0){
-                        System.out.println("redis pipline, read count: " + count);
-                        pipeline.sync();
-                    }
-
                 }
 
                 count++;
-                if(count % 10000 == 0){
+
+                if(count % 500 == 0) {
+                    boolean complete = false;
                     System.out.println("read count: " + count);
-//                    break;
+                    System.out.println("app start commit sql, time: " + sdf.format(System.currentTimeMillis()));
+                    while (!complete) {
+                        try {
+                            executeSql(conn, sql.toString());
+                            complete = true;
+                            sql = new StringBuilder();
+                        } catch (Throwable e) {
+                            e.printStackTrace();
+
+                            Thread.sleep(10000L);
+
+                            conn = getMysqlConn();
+                        }
+                    }
+                    System.out.println("app commit sql complete, time: " + sdf.format(System.currentTimeMillis()));
                 }
 
             }
@@ -116,29 +115,29 @@ public class BigDataTest {
             e.printStackTrace();
         }
 
-        FileWriter writer = null;
-        try {
-            writer = new FileWriter(writeFilePath);
-            writeFileMetricValue("headerKey", "", writer);
-            for (String timeStamp : timeStamps) {
-                writeFileMetricValue(timeStamp, ",", writer);
-            }
-            writeFileMetricValue("\r\n", "", writer);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-//        outputFile(result, writer, timeStamps, fieldCount);
-        outputFileFromRedis(appKeys, timeStamps, headers, startMetricIndex, pipeline, writer, fieldCount);
-        System.out.println("final fieldCount: " + fieldCount);
-
-        if(writer != null){
-            try {
-                writer.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+//        FileWriter writer = null;
+//        try {
+//            writer = new FileWriter(writeFilePath);
+//            writeFileMetricValue("headerKey", "", writer);
+//            for (String timeStamp : timeStamps) {
+//                writeFileMetricValue(timeStamp, ",", writer);
+//            }
+//            writeFileMetricValue("\r\n", "", writer);
+//        } catch (IOException e) {
+//            e.printStackTrace();
+//        }
+//
+////        outputFile(result, writer, timeStamps, fieldCount);
+//        outputFileFromRedis(appKeys, timeStamps, headers, startMetricIndex, pipeline, writer, fieldCount);
+//        System.out.println("final fieldCount: " + fieldCount);
+//
+//        if(writer != null){
+//            try {
+//                writer.close();
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
+//        }
 
     }
 
@@ -153,10 +152,10 @@ public class BigDataTest {
         return pipeline;
     }
 
-    private Connection initJDBC() {
+    private Connection getMysqlConn() {
         // 不同的数据库有不同的驱动
         String driverName = "com.mysql.jdbc.Driver";
-        String url = "jdbc:mysql://dev-mysql-conf.tingyun.com:3306/test?useUnicode=true&amp;characterEncoding=utf8";
+        String url = "jdbc:mysql://dev-mysql-conf.tingyun.com:3306/test?allowMultiQueries=true";
         String user = "lens";
         String password = "nEtop2o10";
 
@@ -169,6 +168,7 @@ public class BigDataTest {
             // 2.user
             // 3.password
             conn = DriverManager.getConnection(url, user, password);
+//            conn.setAutoCommit(false);
             // 开始连接数据库
             System.out.println("数据库连接成功..");
         } catch (ClassNotFoundException e) {
@@ -181,6 +181,51 @@ public class BigDataTest {
 
         return conn;
     }
+
+    private void executeSql(Connection conn, String sql) throws SQLException {
+        Statement statement = null;
+        try {
+            statement = conn.createStatement();
+            statement.execute(sql);
+        } finally {
+            if(statement != null){
+                statement.close();
+            }
+        }
+    }
+
+    private String getTableName(String timeStamp){
+        if(timeStamp.compareTo("2018-08-21 07:00:00") < 0){
+            return "bigdata_test_1";
+        }else if(timeStamp.compareTo("2018-08-21 12:00:00") < 0){
+            return "bigdata_test_2";
+        }else if(timeStamp.compareTo("2018-08-21 18:00:00") < 0){
+            return "bigdata_test_3";
+        }else {
+            return "bigdata_test_4";
+        }
+    }
+
+//    private void outputFileFromMysql(Set<String> appKeys, String[] headers, int startMetricIndex, Connection connection, FileWriter writer, Integer fieldCount){
+//        boolean complete = false;
+//        String sql = "select * from ? limit ?, ?";
+//        int tableShardIndex = 1;
+//        int count = 0;
+//        while(!complete){
+//            try {
+//                PreparedStatement preparedStatement = connection.prepareStatement(sql);
+//                preparedStatement.setString(1, "bigdata_test_" + tableShardIndex);
+//                preparedStatement.setInt(2, count);
+//                preparedStatement.setInt(3, count + 5000);
+//
+//            } catch (SQLException e) {
+//                e.printStackTrace();
+//            }
+//
+//        }
+//    }
+
+
 
     private void outputFileFromRedis(Set<String> appKeys, List<String> timeStamps, String[] headers, int startMetricIndex,
                                      Pipeline pipeline, FileWriter writer, Integer fieldCount){
